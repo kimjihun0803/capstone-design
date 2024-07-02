@@ -1,0 +1,16 @@
+import os
+
+# 디렉토리 경로
+directory_path = r'C:/test___'
+
+# 디렉토리 내의 파일 목록 얻기
+file_list = os.listdir(directory_path)
+
+# 파일 이름 변경
+for filename in file_list:
+    if filename.startswith("eye_"):
+        new_filename = filename.replace("eye_", "open_eye_65_")
+        old_filepath = os.path.join(directory_path, filename)
+        new_filepath = os.path.join(directory_path, new_filename)
+        os.rename(old_filepath, new_filepath)
+        print(f"파일 이름 변경: {filename} -> {new_filename}")
