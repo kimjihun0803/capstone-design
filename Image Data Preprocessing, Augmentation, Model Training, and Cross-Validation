@@ -1,0 +1,105 @@
+import cv2
+import os
+import numpy as np
+from sklearn.model_selection import StratifiedKFold
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.optimizers import Adam
+
+# 이미지 경로
+image_dir = 'C:/eye_data'
+
+# 이미지 크기 및 배치 크기 설정
+image_size = (26, 34)
+batch_size = 32
+
+# 이미지 데이터와 라벨을 저장할 리스트
+data = []
+labels = []
+
+# 이미지 파일을 불러와서 데이터와 라벨을 생성
+for filename in os.listdir(image_dir):
+    if filename.startswith('closed_eye'):
+        label = 1  
+    elif filename.startswith('open_eye'):
+        label = 0  
+    else:
+        continue
+
+    img = cv2.imread(os.path.join(image_dir, filename))
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # 이미지 색상 채널 변환
+    data.append(img)
+    labels.append(label)
+
+data = np.array(data)
+labels = np.array(labels)
+
+# 변수 초기화
+best_fold_idx = None
+best_accuracy = 0.0
+accuracy_per_fold = []  # 각 폴드의 정확도를 저장할 리스트
+
+
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+for fold_idx, (train_idx, test_idx) in enumerate(skf.split(data, labels)):
+    print(f"Fold {fold_idx + 1}")
+
+    train_data, test_data = data[train_idx], data[test_idx]
+    train_labels, test_labels = labels[train_idx], labels[test_idx]
+
+    datagen = ImageDataGenerator(
+        rescale=1./255,
+        rotation_range=20,
+        width_shift_range=0.1,
+        height_shift_range=0.1,
+        shear_range=0.2,
+        zoom_range=0.2,
+        horizontal_flip=True,
+        fill_mode='nearest',
+        preprocessing_function=lambda x: x,
+    )
+
+    model = Sequential([
+        Conv2D(32, kernel_size=3, strides=1, padding='same', activation='relu', input_shape=(26, 34, 3)),
+        MaxPooling2D(2, 2),
+        Conv2D(64, kernel_size=3, strides=1, padding='same', activation='relu'),
+        MaxPooling2D(2, 2),
+        Conv2D(128, kernel_size=3, strides=1, padding='same', activation='relu'),
+        MaxPooling2D(2, 2),
+        Flatten(),
+        Dense(512, activation='relu'),
+        Dropout(0.5),
+        Dense(1, activation='sigmoid')
+    ])
+
+    model.compile(loss='binary_crossentropy', optimizer=Adam(learning_rate=0.001), metrics=['accuracy'])
+
+    history = model.fit(datagen.flow(train_data, train_labels, batch_size=batch_size),
+                        validation_data=(test_data, test_labels),
+                        epochs=30,
+                        verbose=1)
+
+    model.save(f'C:/Users/kimji/openCV_project/eye_model_fold{fold_idx + 1}.h5')
+
+    test_loss, test_acc = model.evaluate(test_data, test_labels)
+    print(f"Test accuracy: {test_acc}")
+
+    # 각 폴드의 정확도를 리스트에 저장
+    accuracy_per_fold.append(test_acc)
+
+    # 가장 높은 accuracy 모델 갱신
+    if test_acc > best_accuracy:
+        best_accuracy = test_acc
+        best_fold_idx = fold_idx
+
+# 모든 폴드의 학습이 끝난 후, 각 폴드의 정확도와 최고 정확도를 출력
+print("\nTest accuracy for each fold:")
+for i, acc in enumerate(accuracy_per_fold):
+    print(f"Fold {i+1}: {acc}")
+
+if best_fold_idx is not None:
+    print(f"Best accuracy: {best_accuracy} in Fold {best_fold_idx + 1}")
+else:
+    print("No best model found")
