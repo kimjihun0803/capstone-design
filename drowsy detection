@@ -1,0 +1,141 @@
+######최종########
+
+import cv2
+import numpy as np
+import dlib
+from keras.models import load_model
+import pygame
+import time
+
+# 모델 불러오기
+model = load_model('eye_model_fold1.h5')
+
+# Dlib 얼굴 및 랜드마크 검출기 초기화
+detector = dlib.get_frontal_face_detector()
+predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
+
+# 알람 소리 초기화
+pygame.mixer.init()
+alarm_sound = pygame.mixer.Sound('alarm.wav')
+
+def get_eye_prediction(eye_image):
+    # 눈 이미지가 비어있으면 중립적인 값 반환
+    if eye_image.size == 0:
+        print("Warning: Empty eye image!")
+        return 0.5
+
+    # 눈 이미지 전처리
+    eye_image_resized = cv2.resize(eye_image, (34, 26))
+    eye_image_normalized = eye_image_resized / 255.0
+    eye_image_expanded = np.expand_dims(eye_image_normalized, axis=-1)
+    eye_image_rgb = np.repeat(eye_image_expanded, 3, axis=-1)
+    eye_image_input = np.expand_dims(eye_image_rgb, axis=0)
+
+    # 눈 상태 예측
+    predicted_label = model.predict(eye_image_input)
+    return predicted_label[0][0]
+
+# 카메라 초기화
+cap = cv2.VideoCapture(0)
+
+# 프레임 카운터 및 타이머 초기화
+frame_counter = 0
+SKIP_FRAMES = 5
+closed_eye_frame_count = 0
+open_eye_frame_count = 0
+alarm_on = False
+ALARM_TRIGGER_TIME = 2  # 눈이 2초 동안 감겨 있으면 알람이 울림
+ALARM_RESET_TIME = 1  # 눈이 1초 동안 떠 있으면 알람이 멈춤
+
+# 타임스탬프 초기화
+closed_eye_start_time = None
+open_eye_start_time = None
+frame_times = [time.time()]
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+    
+    # 현재 시간 기록
+    current_time = time.time()
+    frame_times.append(current_time)
+    frame_counter += 1
+
+    # FPS 계산 (최근 60 프레임 기준)
+    if len(frame_times) > 60:
+        fps = 60 / (frame_times[-1] - frame_times[-61])
+        frame_times.pop(0)  # 오래된 타임스탬프 제거
+
+    # 프레임 처리 (SKIP_FRAMES마다)
+    if frame_counter % SKIP_FRAMES == 0:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = detector(gray)
+
+        for face in faces:
+            landmarks = predictor(gray, face)
+
+            # 눈 좌표 추출 및 예측
+            left_eye_coords = np.array([(landmarks.part(i).x, landmarks.part(i).y) for i in range(36, 42)])
+            left_eye_image = gray[left_eye_coords[:, 1].min():left_eye_coords[:, 1].max(),
+                                  left_eye_coords[:, 0].min():left_eye_coords[:, 0].max()]
+            
+            right_eye_coords = np.array([(landmarks.part(i).x, landmarks.part(i).y) for i in range(42, 48)])
+            right_eye_image = gray[right_eye_coords[:, 1].min():right_eye_coords[:, 1].max(),
+                                   right_eye_coords[:, 0].min():right_eye_coords[:, 0].max()]
+
+            left_eye_pred = get_eye_prediction(left_eye_image)
+            right_eye_pred = get_eye_prediction(right_eye_image)
+
+            # 평균 예측값 계산
+            average_prediction = (left_eye_pred + right_eye_pred) / 2
+
+            # 눈 상태 결정 (1 = 감김, 0 = 뜸)
+            final_status = int(average_prediction > 0.5)
+
+            # 눈 상태에 따른 타이머 업데이트
+            if final_status == 1:  # 눈 감김
+                if closed_eye_start_time is None:
+                    closed_eye_start_time = current_time
+                open_eye_start_time = None
+                elapsed_time = current_time - closed_eye_start_time
+                
+                if elapsed_time >= ALARM_TRIGGER_TIME and not alarm_on:
+                    alarm_sound.play(-1)
+                    alarm_on = True
+            else:  # 눈 뜸
+                if open_eye_start_time is None:
+                    open_eye_start_time = current_time
+                closed_eye_start_time = None
+                elapsed_time = current_time - open_eye_start_time
+                
+                if elapsed_time >= ALARM_RESET_TIME and alarm_on:
+                    alarm_sound.stop()
+                    alarm_on = False
+
+            # 알람 상태에 따른 경고 메시지 표시
+            if alarm_on:
+                cv2.putText(frame, "Drowsy Driving Warning!", (200, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+            # 타이머 표시
+            elapsed_seconds = int(elapsed_time)
+            elapsed_milliseconds = int((elapsed_time - elapsed_seconds) * 1000)
+            time_str = f"{elapsed_seconds}.{elapsed_milliseconds:03d} s"
+            cv2.putText(frame, time_str, (450, 450), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+
+            # 눈 상태 표시
+            status_text = "Closed" if final_status == 1 else "Open"
+            color = (0, 0, 255) if final_status == 1 else (0, 255, 0)
+            cv2.putText(frame, status_text, (face.left() + 50, face.top()), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+        # 화면에 결과 표시
+        cv2.imshow('Eye Status Detection', frame)
+
+    # 'q' 키를 누르면 종료
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# 자원 해제
+cap.release()
+cv2.destroyAllWindows()
+pygame.mixer.quit()
