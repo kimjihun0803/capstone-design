@@ -1,0 +1,38 @@
+######데이터 수집 및 전처리######
+import cv2
+import os
+
+data_dir = "C:/test___"
+os.makedirs(data_dir, exist_ok=True)
+
+# Load Haar Cascade classifier for face and eye detection  ----  haarcascade 원리
+
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
+
+video_path = "C:/drowsy_datasets/64.mp4"
+cap = cv2.VideoCapture(video_path)
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
+    
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.3, minNeighbors=5)
+    
+    for (x, y, w, h) in faces:
+        face = frame[y:y+h, x:x+w]
+        eyes = eye_cascade.detectMultiScale(face)
+        
+        for (ex, ey, ew, eh) in eyes:
+            eye = face[ey:ey+eh, ex:ex+ew]
+            
+            # Resize the eye image to the desired size (height 26, width 34)
+            resized_eye = cv2.resize(eye, (34, 26))
+            
+            eye_filename = f"{data_dir}/eye_{len(os.listdir(data_dir))}.jpg"
+            cv2.imwrite(eye_filename, resized_eye)
+            
+cap.release()
+cv2.destroyAllWindows()
